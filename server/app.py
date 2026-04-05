@@ -1,5 +1,11 @@
 from fastapi import FastAPI, Query
-from models import Action, StepResponse
+from pydantic import BaseModel
+from typing import Any
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from env import CodeEnv
 
 app = FastAPI(
@@ -8,7 +14,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-env = CodeEnv()  # ek hi object — sab requests yahi use karengi
+env = CodeEnv()
+
+class Action(BaseModel):
+    action_type: str
+    payload: dict[str, Any] = {}
 
 @app.get("/")
 def root():
@@ -22,12 +32,7 @@ def reset(task_id: str = Query(default="easy", enum=["easy", "medium", "hard"]))
 @app.post("/step")
 def step(action: Action):
     state, reward, done, message = env.step(action.dict())
-    return {
-        "state": state,
-        "reward": reward,
-        "done": done,
-        "message": message
-    }
+    return {"state": state, "reward": reward, "done": done, "message": message}
 
 @app.get("/state")
 def get_state():
@@ -42,3 +47,10 @@ def list_tasks():
             {"id": "hard",   "description": "Fix a cross-file bug in two files"}
         ]
     }
+
+def main():
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
