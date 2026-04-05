@@ -4,34 +4,50 @@ import time
 import requests
 from openai import OpenAI
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://openrouter.ai/api/v1")
-MODEL_NAME   = os.environ.get("MODEL_NAME", "")
-HF_TOKEN     = os.environ.get("HF_TOKEN", "")
-ENV_URL      = os.environ.get("ENV_URL", "http://localhost:7860")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME", "meta-llama/llama-3.2-3b-instruct:free")
+HF_TOKEN     = os.getenv("HF_TOKEN", "")
+ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-# Fallback models list
 MODELS = [
     MODEL_NAME,
-    "nousresearch/hermes-3-llama-3.1-8b:free",
-    "mistralai/mistral-small-3.2-24b-instruct:free",
-    "qwen/qwen3-8b:free",
     "meta-llama/llama-3.2-3b-instruct:free",
+    "qwen/qwen3-8b:free",
 ]
+
+TASKS = ["easy", "medium", "hard"]
+BENCHMARK = "broken-codebase-repair"
+
+
+def log_start(task, env, model):
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step, action, reward, done, error=None):
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+
+def log_end(success, steps, score, rewards):
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+
 
 def get_action_from_llm(state: dict, task_id: str) -> dict:
     system_prompt = """You are a debugging agent. Fix broken Python code.
 
 Available actions:
-1. read_file   -> {"action_type": "read_file", "payload": {"filename": "app.py"}}
-2. edit_code   -> {"action_type": "edit_code", "payload": {"filename": "app.py", "new_code": "COMPLETE FILE CONTENT"}}
-3. run_tests   -> {"action_type": "run_tests", "payload": {}}
+1. read_file    -> {"action_type": "read_file", "payload": {"filename": "app.py"}}
+2. edit_code    -> {"action_type": "edit_code", "payload": {"filename": "app.py", "new_code": "COMPLETE FILE"}}
+3. run_tests    -> {"action_type": "run_tests", "payload": {}}
 4. request_hint -> {"action_type": "request_hint", "payload": {}}
 
-CRITICAL RULES:
-- edit_code mein ALWAYS poora file content bhejo new_code key mein
-- Sirf JSON respond karo — koi explanation nahi
+RULES:
+- edit_code mein ALWAYS poora file content new_code key mein bhejo
+- Sirf JSON respond karo
 - new_code key ka naam bilkul new_code hi rakho
 
 Available files: """ + str(list(state.get("files", {}).keys()))
@@ -56,16 +72,14 @@ Next action? JSON only:"""
                 max_tokens=500,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt}
+                    {"role": "user", "content": user_prompt}
                 ]
             )
             raw = response.choices[0].message.content
             if raw is None:
                 continue
-
             raw = raw.strip()
 
-            # Markdown backticks hataao
             if "```" in raw:
                 parts = raw.split("```")
                 for part in parts:
@@ -79,7 +93,6 @@ Next action? JSON only:"""
 
             action = json.loads(raw.strip())
 
-            # new_code fix — alag keys handle karo
             if action.get("action_type") == "edit_code":
                 payload = action.get("payload", {})
                 new_code = (
@@ -99,36 +112,27 @@ Next action? JSON only:"""
         except Exception as e:
             err = str(e)
             if "429" in err:
-                print(json.dumps({
-                    "event": "RATE_LIMIT",
-                    "model": model,
-                    "waiting": "10s"
-                }), flush=True)
                 time.sleep(10)
             elif "404" in err:
-                print(json.dumps({
-                    "event": "MODEL_NOT_FOUND",
-                    "model": model
-                }), flush=True)
-            else:
-                print(json.dumps({
-                    "event": "ERROR",
-                    "model": model,
-                    "error": err[:100]
-                }), flush=True)
+                pass
             continue
 
     return {"action_type": "run_tests", "payload": {}}
 
 
 def run_task(task_id: str):
-    print(json.dumps({"event": "[START]", "task_id": task_id}), flush=True)
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
-    resp  = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
-    state = resp.json()["state"]
+    try:
+        resp = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
+        state = resp.json()["state"]
+    except Exception as e:
+        log_end(success=False, steps=0, score=0.0, rewards=[])
+        return 0.0
 
-    total_reward = 0.0
-    step_num     = 0
+    rewards = []
+    steps_taken = 0
+    success = False
     consecutive_run_tests = 0
 
     for _ in range(10):
@@ -147,52 +151,56 @@ def run_task(task_id: str):
         else:
             consecutive_run_tests = 0
 
-        step_resp = requests.post(f"{ENV_URL}/step", json=action)
-        result    = step_resp.json()
-
-        state    = result["state"]
-        reward   = result["reward"]
-        done     = result["done"]
-        message  = result.get("message", "")
-
-        total_reward += reward
-        step_num     += 1
-
-        print(json.dumps({
-            "event":   "[STEP]",
-            "task_id": task_id,
-            "step":    step_num,
-            "action":  action,
-            "reward":  reward,
-            "done":    done,
-            "message": message
-        }), flush=True)
-
-        if done:
+        try:
+            step_resp = requests.post(f"{ENV_URL}/step", json=action)
+            result = step_resp.json()
+        except Exception as e:
+            log_step(steps_taken + 1, action.get("action_type", "unknown"),
+                    0.0, False, str(e))
             break
 
-        time.sleep(1)  # rate limit se bachne ke liye
+        state   = result["state"]
+        reward  = result["reward"]
+        done    = result["done"]
+        message = result.get("message", "")
 
-    print(json.dumps({
-        "event":        "[END]",
-        "task_id":      task_id,
-        "total_reward": round(total_reward, 3),
-        "steps":        step_num
-    }), flush=True)
+        rewards.append(reward)
+        steps_taken += 1
 
-    return total_reward
+        log_step(
+            step=steps_taken,
+            action=action.get("action_type", "unknown"),
+            reward=reward,
+            done=done,
+            error=None
+        )
+
+        if done:
+            if state.get("tests_passed") == state.get("total_tests"):
+                success = True
+            break
+
+        time.sleep(1)
+
+    score = max(rewards) if rewards else 0.0
+    score = min(max(score, 0.0), 1.0)
+
+    log_end(
+        success=success,
+        steps=steps_taken,
+        score=score,
+        rewards=rewards
+    )
+
+    return score
 
 
 if __name__ == "__main__":
-    tasks  = ["easy", "medium", "hard"]
-    scores = {}
+    all_scores = {}
 
-    for task_id in tasks:
+    for task_id in TASKS:
         score = run_task(task_id)
-        scores[task_id] = score
-        time.sleep(5)  # tasks ke beech wait
+        all_scores[task_id] = score
+        time.sleep(5)
 
-    print(json.dumps({
-        "event":  "FINAL_SCORES",
-        "scores": scores
-    }), flush=True)
+    print(f"[FINAL] scores={json.dumps(all_scores)}", flush=True)
