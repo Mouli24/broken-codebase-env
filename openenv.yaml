@@ -1,0 +1,68 @@
+name: broken-codebase-repair
+version: "1.0"
+description: >
+  An environment where an AI agent debugs and fixes broken Python code.
+  The agent must read files, identify bugs, apply fixes, and run tests.
+
+observation_space:
+  type: object
+  properties:
+    task_id:
+      type: string
+    files:
+      type: object
+      description: Dictionary of filename to code content
+    logs:
+      type: array
+      items:
+        type: string
+    tests_passed:
+      type: integer
+    total_tests:
+      type: integer
+    steps_taken:
+      type: integer
+    max_steps:
+      type: integer
+    done:
+      type: boolean
+    hints_used:
+      type: integer
+
+action_space:
+  type: object
+  properties:
+    action_type:
+      type: string
+      enum: [read_file, edit_code, run_tests, request_hint]
+    payload:
+      type: object
+      description: >
+        read_file    -> {filename: string}
+        edit_code    -> {filename: string, new_code: string}
+        run_tests    -> {}
+        request_hint -> {}
+
+tasks:
+  - id: easy
+    description: Fix a syntax error — missing colon in function definition
+    difficulty: easy
+    max_steps: 10
+    reward_range: [0.0, 1.0]
+
+  - id: medium
+    description: Fix a logic bug — wrong operator in divide function
+    difficulty: medium
+    max_steps: 10
+    reward_range: [0.0, 1.0]
+
+  - id: hard
+    description: Fix a cross-file bug — utils.py returns wrong type affecting app.py
+    difficulty: hard
+    max_steps: 10
+    reward_range: [0.0, 1.0]
+
+endpoints:
+  reset: POST /reset
+  step:  POST /step
+  state: GET  /state
