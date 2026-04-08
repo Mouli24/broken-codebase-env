@@ -4,25 +4,26 @@ import time
 import requests
 from openai import OpenAI
 
-# Checklist Item 2 & 3 — Environment variables
+# Environment variables
 API_BASE_URL     = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL_NAME       = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
-HF_TOKEN         = os.getenv("HF_TOKEN")
+HF_TOKEN         = os.getenv("HF_TOKEN", "dummy-key")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-# Checklist Item 4 — OpenAI client
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+# OpenAI client
+api_key = HF_TOKEN if HF_TOKEN else "dummy-key"
+client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
 
 BENCHMARK = "broken-codebase-repair"
 TASKS     = ["easy", "medium", "hard"]
 MODELS    = [
     MODEL_NAME,
-    "meta-llama/llama-3.2-3b-instruct:free",
+    "qwen/qwen3.6-plus:free",
     "qwen/qwen3-8b:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
 ]
 
-# Checklist Item 5 — Exact log format
 def log_start(task, env, model):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
@@ -186,7 +187,7 @@ if __name__ == "__main__":
     all_scores = {}
 
     for task_id in TASKS:
-        score          = run_task(task_id)
+        score               = run_task(task_id)
         all_scores[task_id] = score
         time.sleep(5)
 
