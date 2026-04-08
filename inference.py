@@ -4,16 +4,17 @@ import time
 import requests
 from openai import OpenAI
 
-# Environment variables
-API_BASE_URL     = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
+# Environment variables — judges ye inject karte hain
+API_BASE_URL     = os.environ["API_BASE_URL"]
 MODEL_NAME       = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
-HF_TOKEN         = os.getenv("HF_TOKEN") or "dummy-key"
+API_KEY          = os.environ["API_KEY"]
+HF_TOKEN         = os.getenv("HF_TOKEN") or API_KEY
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-# OpenAI client — safely initialize
+# OpenAI client — judges ka API_BASE_URL aur API_KEY use karo
 try:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 except Exception as e:
     print(f"[ERROR] OpenAI client init failed: {e}", flush=True)
     client = None
