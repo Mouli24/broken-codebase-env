@@ -7,13 +7,13 @@ from openai import OpenAI
 # Environment variables
 API_BASE_URL     = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL_NAME       = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
-HF_TOKEN         = os.getenv("HF_TOKEN", "dummy-key")
+HF_TOKEN         = os.getenv("HF_TOKEN") or "dummy-key"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
 # OpenAI client
-api_key = HF_TOKEN if HF_TOKEN else "dummy-key"
-client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
+
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 BENCHMARK = "broken-codebase-repair"
 TASKS     = ["easy", "medium", "hard"]
