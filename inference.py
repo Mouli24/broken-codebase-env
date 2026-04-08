@@ -11,9 +11,12 @@ HF_TOKEN         = os.getenv("HF_TOKEN") or "dummy-key"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-# OpenAI client
-
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+# OpenAI client — safely initialize
+try:
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+except Exception as e:
+    print(f"[ERROR] OpenAI client init failed: {e}", flush=True)
+    client = None
 
 BENCHMARK = "broken-codebase-repair"
 TASKS     = ["easy", "medium", "hard"]
@@ -24,13 +27,16 @@ MODELS    = [
     "meta-llama/llama-3.2-3b-instruct:free",
 ]
 
+
 def log_start(task, env, model):
     print(f"[START] task={task} env={env} model={model}", flush=True)
+
 
 def log_step(step, action, reward, done, error=None):
     error_val = error if error else "null"
     done_val  = str(done).lower()
     print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
 
 def log_end(success, steps, score, rewards):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
@@ -38,6 +44,10 @@ def log_end(success, steps, score, rewards):
 
 
 def get_action_from_llm(state: dict, task_id: str) -> dict:
+    # Agar client initialize nahi hua toh default action
+    if client is None:
+        return {"action_type": "run_tests", "payload": {}}
+
     system_prompt = """You are a debugging agent. Fix broken Python code.
 
 Available actions:
@@ -127,13 +137,18 @@ def run_task(task_id: str):
         resp  = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
         state = resp.json()["state"]
     except Exception as e:
+        print(f"[ERROR] Could not connect to env: {e}", flush=True)
         log_end(success=False, steps=0, score=0.0, rewards=[])
         return 0.0
 
     consecutive_run_tests = 0
 
     for _ in range(10):
-        action = get_action_from_llm(state, task_id)
+        try:
+            action = get_action_from_llm(state, task_id)
+        except Exception as e:
+            print(f"[ERROR] get_action_from_llm failed: {e}", flush=True)
+            action = {"action_type": "run_tests", "payload": {}}
 
         if action.get("action_type") == "run_tests":
             consecutive_run_tests += 1
@@ -187,7 +202,11 @@ if __name__ == "__main__":
     all_scores = {}
 
     for task_id in TASKS:
-        score               = run_task(task_id)
+        try:
+            score = run_task(task_id)
+        except Exception as e:
+            print(f"[ERROR] Task {task_id} failed: {e}", flush=True)
+            score = 0.0
         all_scores[task_id] = score
         time.sleep(5)
 
