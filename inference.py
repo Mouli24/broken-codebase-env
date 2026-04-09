@@ -4,29 +4,18 @@ import time
 import requests
 from openai import OpenAI
 
-# Environment variables — judges ye inject karte hain
+# Environment variables — judges inject karte hain
 API_BASE_URL     = os.environ["API_BASE_URL"]
 MODEL_NAME       = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
 API_KEY          = os.environ["API_KEY"]
-HF_TOKEN         = os.getenv("HF_TOKEN") or API_KEY
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-# OpenAI client — judges ka API_BASE_URL aur API_KEY use karo
-try:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-except Exception as e:
-    print(f"[ERROR] OpenAI client init failed: {e}", flush=True)
-    client = None
+# OpenAI client — judges ka proxy use karega
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 BENCHMARK = "broken-codebase-repair"
 TASKS     = ["easy", "medium", "hard"]
-MODELS    = [
-    MODEL_NAME,
-    "qwen/qwen3.6-plus:free",
-    "qwen/qwen3-8b:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-]
 
 
 def log_start(task, env, model):
@@ -45,22 +34,18 @@ def log_end(success, steps, score, rewards):
 
 
 def get_action_from_llm(state: dict, task_id: str) -> dict:
-    # Agar client initialize nahi hua toh default action
-    if client is None:
-        return {"action_type": "run_tests", "payload": {}}
-
     system_prompt = """You are a debugging agent. Fix broken Python code.
 
 Available actions:
 1. read_file    -> {"action_type": "read_file", "payload": {"filename": "app.py"}}
-2. edit_code    -> {"action_type": "edit_code", "payload": {"filename": "app.py", "new_code": "COMPLETE FILE"}}
+2. edit_code    -> {"action_type": "edit_code", "payload": {"filename": "app.py", "new_code": "COMPLETE FILE CONTENT HERE"}}
 3. run_tests    -> {"action_type": "run_tests", "payload": {}}
-4. request_hint -> {"action_type": "request_hint", "payload": {}}
 
 RULES:
 - edit_code mein ALWAYS poora file content new_code key mein bhejo
 - Sirf JSON respond karo — koi explanation nahi
 - new_code key ka naam bilkul new_code hi rakho
+- Pehle read_file karo, phir edit_code, phir run_tests
 
 Available files: """ + str(list(state.get("files", {}).keys()))
 
@@ -73,58 +58,55 @@ Files:
 {json.dumps(state.get('files', {}), indent=2)}
 Next action? JSON only:"""
 
-    for model in MODELS:
-        if not model:
-            continue
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                max_tokens=500,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt}
-                ]
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            max_tokens=500,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt}
+            ]
+        )
+
+        raw = response.choices[0].message.content
+        if raw is None:
+            return {"action_type": "run_tests", "payload": {}}
+
+        raw = raw.strip()
+
+        # Markdown backticks hataao
+        if "```" in raw:
+            parts = raw.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:]
+                part = part.strip()
+                if part.startswith("{"):
+                    raw = part
+                    break
+
+        action = json.loads(raw.strip())
+
+        # LLM alag key names use karta hai — normalize karo
+        if action.get("action_type") == "edit_code":
+            payload  = action.get("payload", {})
+            new_code = (
+                payload.get("new_code") or
+                payload.get("code") or
+                payload.get("content") or
+                payload.get("file_content") or
+                payload.get("new_content") or
+                payload.get("updated_code") or
+                payload.get("fixed_code") or
+                ""
             )
-            raw = response.choices[0].message.content
-            if raw is None:
-                continue
-            raw = raw.strip()
+            action["payload"]["new_code"] = new_code
 
-            if "```" in raw:
-                parts = raw.split("```")
-                for part in parts:
-                    part = part.strip()
-                    if part.startswith("json"):
-                        part = part[4:]
-                    part = part.strip()
-                    if part.startswith("{"):
-                        raw = part
-                        break
+        return action
 
-            action = json.loads(raw.strip())
-
-            if action.get("action_type") == "edit_code":
-                payload  = action.get("payload", {})
-                new_code = (
-                    payload.get("new_code") or
-                    payload.get("code") or
-                    payload.get("content") or
-                    payload.get("file_content") or
-                    payload.get("new_content") or
-                    payload.get("updated_code") or
-                    payload.get("fixed_code") or ""
-                )
-                action["payload"]["new_code"] = new_code
-
-            return action
-
-        except Exception as e:
-            err = str(e)
-            if "429" in err:
-                time.sleep(10)
-            continue
-
-    return {"action_type": "run_tests", "payload": {}}
+    except Exception as e:
+        return {"action_type": "run_tests", "payload": {}}
 
 
 def run_task(task_id: str):
@@ -138,19 +120,15 @@ def run_task(task_id: str):
         resp  = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
         state = resp.json()["state"]
     except Exception as e:
-        print(f"[ERROR] Could not connect to env: {e}", flush=True)
         log_end(success=False, steps=0, score=0.0, rewards=[])
         return 0.0
 
     consecutive_run_tests = 0
 
     for _ in range(10):
-        try:
-            action = get_action_from_llm(state, task_id)
-        except Exception as e:
-            print(f"[ERROR] get_action_from_llm failed: {e}", flush=True)
-            action = {"action_type": "run_tests", "payload": {}}
+        action = get_action_from_llm(state, task_id)
 
+        # Stuck loop fix — agar run_tests repeat ho raha hai
         if action.get("action_type") == "run_tests":
             consecutive_run_tests += 1
             if consecutive_run_tests >= 2:
@@ -167,7 +145,8 @@ def run_task(task_id: str):
             step_resp = requests.post(f"{ENV_URL}/step", json=action)
             result    = step_resp.json()
         except Exception as e:
-            log_step(steps_taken + 1, action.get("action_type", "unknown"), 0.0, False, str(e))
+            log_step(steps_taken + 1, action.get("action_type", "unknown"),
+                    0.0, False, str(e))
             break
 
         state   = result["state"]
@@ -195,7 +174,13 @@ def run_task(task_id: str):
     score = max(rewards) if rewards else 0.0
     score = min(max(score, 0.0), 1.0)
 
-    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    log_end(
+        success=success,
+        steps=steps_taken,
+        score=score,
+        rewards=rewards
+    )
+
     return score
 
 
@@ -203,11 +188,7 @@ if __name__ == "__main__":
     all_scores = {}
 
     for task_id in TASKS:
-        try:
-            score = run_task(task_id)
-        except Exception as e:
-            print(f"[ERROR] Task {task_id} failed: {e}", flush=True)
-            score = 0.0
+        score = run_task(task_id)
         all_scores[task_id] = score
         time.sleep(5)
 
