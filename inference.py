@@ -4,14 +4,11 @@ import time
 import requests
 from openai import OpenAI
 
-# Environment variables — judges inject karte hain
-API_BASE_URL     = os.environ["API_BASE_URL"]
-MODEL_NAME       = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
-API_KEY          = os.environ["API_KEY"]
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-ENV_URL          = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
+API_KEY      = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy-key"
+ENV_URL      = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-# OpenAI client — judges ka proxy use karega
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 BENCHMARK = "broken-codebase-repair"
