@@ -2,6 +2,7 @@ import os
 import json
 import time
 import requests
+import httpx
 from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://openrouter.ai/api/v1")
@@ -9,7 +10,29 @@ MODEL_NAME   = os.getenv("MODEL_NAME", "qwen/qwen3.6-plus:free")
 API_KEY      = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or "dummy-key"
 ENV_URL      = os.getenv("ENV_URL", "https://Mouli24-broken-codebase-env.hf.space")
 
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+_client = None
+
+def get_client():
+    """Lazy-initialize the OpenAI client to avoid module-level crashes."""
+    global _client
+    if _client is None:
+        try:
+            http_client = httpx.Client(
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                follow_redirects=True,
+            )
+            _client = OpenAI(
+                base_url=API_BASE_URL,
+                api_key=API_KEY,
+                http_client=http_client,
+            )
+        except Exception as e:
+            print(f"[WARN] OpenAI client init failed: {e}", flush=True)
+            _client = OpenAI(
+                base_url=API_BASE_URL,
+                api_key=API_KEY,
+            )
+    return _client
 
 BENCHMARK = "broken-codebase-repair"
 TASKS     = ["easy", "medium", "hard"]
@@ -56,7 +79,7 @@ Files:
 Next action? JSON only:"""
 
     try:
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=MODEL_NAME,
             max_tokens=500,
             messages=[
